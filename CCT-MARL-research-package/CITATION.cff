@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+title: "CCT-MARL: Construction-oriented Communication and Coordination with Task-progress Shielding"
+message: "If you use this research package, please cite the accompanying manuscript."
+authors:
+  - family-names: Liu
+    given-names: Lingcheng
+  - family-names: Zhang
+    given-names: Yichao
+  - family-names: Guan
+    given-names: Jihong
+  - family-names: Li
+    given-names: Wengen
+  - family-names: Cao
+    given-names: Zhiwei
+  - family-names: Zhou
+    given-names: Shuigeng
+repository-code: "https://github.com/Huskieeeee/CCT-MARL"
