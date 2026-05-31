@@ -1,0 +1,18 @@
+name: cct-marl
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - numpy
+  - pandas
+  - matplotlib
+  - scipy
+  - pyyaml
+  - tqdm
+  - pytest
+  - pip:
+      - torch
+      - tensorboard

@@ -1,0 +1,31 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated manuscript and this repository."
+title: "CCT-MARL: A construction-oriented hybrid multi-agent reinforcement learning framework for human-machine coordination"
+type: software
+authors:
+  - family-names: Liu
+    given-names: Lingcheng
+  - family-names: Zhang
+    given-names: Yichao
+  - family-names: Guan
+    given-names: Jihong
+  - family-names: Li
+    given-names: Wengen
+  - family-names: Cao
+    given-names: Zhiwei
+  - family-names: Zhou
+    given-names: Shuigeng
+repository-code: "https://github.com/Huskieeeee/CCT-MARL"
+url: "https://github.com/Huskieeeee/CCT-MARL"
+license: MIT
+version: "1.0.0-peerj-submission"
+date-released: "2026-05-31"
+keywords:
+  - multi-agent reinforcement learning
+  - intelligent construction
+  - human-machine coordination
+  - construction robotics
+  - multi-agent communication
+  - safety-aware coordination
+  - collision avoidance
+abstract: "This software repository provides implementation and reproduction materials for CCT-MARL, a construction-oriented hybrid multi-agent reinforcement learning framework for human-machine coordination."

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cct-marl"
+version = "1.0.0"
+description = "CCT-MARL reproducibility package for PeerJ Computer Science submission"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+authors = [
+  {name = "Lingcheng Liu"},
+  {name = "Yichao Zhang"},
+  {name = "Jihong Guan"},
+  {name = "Wengen Li"},
+  {name = "Zhiwei Cao"},
+  {name = "Shuigeng Zhou"}
+]
+keywords = ["multi-agent reinforcement learning", "intelligent construction", "human-machine coordination", "construction robotics"]
+
+[tool.setuptools.packages.find]
+where = ["src"]

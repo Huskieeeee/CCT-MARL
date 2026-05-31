@@ -1,0 +1,1029 @@
+
+\documentclass[fleqn,10pt]{wlpeerj}
+
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{booktabs}
+\usepackage{multirow}
+\usepackage{graphicx}
+\usepackage{subcaption}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{url}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{mathtools}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+\hypersetup{colorlinks=true,linkcolor=PeerJBlue,citecolor=PeerJGreen,urlcolor=PeerJBlue}
+
+\newcommand{\cct}{CCT-MARL}
+\newcommand{\hm}{human--machine}
+\newcommand{\dyad}{H--M dyad}
+\newcommand{\state}{s_t}
+\newcommand{\obs}{o_{i,t}}
+\newcommand{\action}{a_{i,t}}
+\newcommand{\reward}{r_t}
+\newcommand{\msg}{m_{i,t}}
+\newcommand{\exps}{E_{i,t}}
+
+\title{CCT-MARL: A construction-oriented hybrid multi-agent reinforcement learning framework for human--machine coordination}
+\date{}
+\runningtitle{CCT-MARL for construction coordination}
+
+\author[1]{Lingcheng Liu}
+\author[1]{Yichao Zhang}
+\author[1]{Jihong Guan}
+\author[1]{Wengen Li}
+\author[1]{Zhiwei Cao}
+\author[2]{Shuigeng Zhou}
+\affil[1]{School of Computer Science and Technology, Tongji University, Shanghai, China}
+\affil[2]{School of Computer Science, Fudan University, Shanghai, China}
+\corrauthor{Yichao Zhang; Jihong Guan}
+
+\keywords{multi-agent reinforcement learning; intelligent construction; human--machine coordination; construction robotics; safety--efficiency trade-off}
+
+\begin{document}
+\flushbottom
+\maketitle
+
+\begin{abstract}
+Human-machine collaborative construction requires multiple workers and machine resources to coordinate spatial movement, task execution, inspection, and rework while adhering to safety and communication constraints. Existing multi-agent reinforcement learning methods provide general coordination capabilities, but they usually treat construction as a generic navigation or task-allocation problem and do not explicitly model the build-inspect-rework lifecycle, dyad-level construction feedback, or the interaction between learned policies and rule-based safety correction. To address these limitations, we propose CCT-MARL, a construction-oriented hybrid multi-agent reinforcement learning framework for human-machine dyad coordination. CCT-MARL combines experience-conditioned policy learning, structured broadcast communication, and a task-progress reservation shield. The experience manager converts build, inspect, and rework feedback into dyad-level quality and risk states; the communication module aggregates peer experience through a specified mean broadcast operator; and the reservation shield corrects unsafe or progress-inefficient candidate actions before execution. To avoid over-attributing performance solely to the shield, we evaluate CCT-MARL against IQL, VDN, MAPPO, MAPPO+Shield, IQL+Shield, greedy, and greedy-reservation baselines, and further conduct scalability and reward-sensitivity studies. The results show that although shielded baselines can eliminate collisions with the reservation mechanism, CCT-MARL provides a more stable safety-efficiency-communication profile, achieving competitive makespan, bounded communication cost, and consistent performance across the default 5×5 setting and larger 8×8 and 10×10 construction layouts. These findings suggest that construction coordination benefits from coupling learned policies with explicit process feedback and safety-aware action correction, rather than relying solely on reinforcement learning or rule-based planning. The code is publicly available at https://github.com/Huskieeeee/CCT-MARL.
+
+\end{abstract}
+
+\linenumbers
+
+% \linenumbers
+
+% ============================================================
+\section{Introduction}
+% ============================================================
+
+\subsection{Background}
+
+Human--machine collaboration is becoming a central problem in intelligent construction, where human workers and machine resources jointly execute spatially distributed tasks under workspace, process-quality, and safety constraints \cite{Bock2015FutureConstructionAutomation,BockLinner2016ConstructionRobots,OesterreichTeuteberg2016DigitisationConstruction,Liang2021HRCConstruction,Zhang2023HRCOnSite}. Unlike conventional construction scheduling, which mainly emphasizes precedence, resource feasibility, and completion time \cite{KolischHartmann1999RCPSP,Hartmann2000HeuristicsRCPSP,HartmannBriskorn2010RCPSPSurvey}, intelligent construction coordination also involves motion planning, task execution, inspection, rework, waiting, and collision avoidance. These factors make the problem a process-level coordination task rather than a single-objective navigation or scheduling benchmark.
+
+Reinforcement learning provides a natural framework for sequential decision-making under uncertainty \cite{SuttonBarto2018RL,Mnih2015DQN,Schulman2017PPO}. In multi-agent reinforcement learning (MARL), however, each agent's policy changes the environment observed by the other agents, leading to non-stationarity and coordination difficulty \cite{Tan1993MARL,Lowe2017MADDPG,Foerster2017StabilisingReplay}. These challenges are amplified in construction scenarios because different human--machine dyads must coordinate where to move, when to execute construction, how to react to inspection feedback, and how to avoid spatial conflicts.
+
+\subsection{Motivation}
+
+Existing MARL methods, including IQL, VDN, QMIX, QTRAN, QPLEX, COMA, MADDPG, and MAPPO, provide important algorithmic foundations for decentralized or centralized cooperative learning \cite{Tan1993MARL,Sunehag2018VDN,Rashid2018QMIX,Son2019QTRAN,Wang2021QPLEX,Foerster2018COMA,Lowe2017MADDPG,Yu2022MAPPO}. Nevertheless, generic MARL methods usually do not explicitly convert construction-process feedback into reusable dyad-level experience. In intelligent construction, build, inspection, and rework outcomes are not merely instantaneous rewards; they indicate whether a human--machine dyad should continue relying on a particular execution pattern, communicate risk to others, or adjust its future target selection.
+
+Communication is also essential for construction coordination. Prior studies have investigated differentiable, continuous, attentional, targeted, and emergent communication mechanisms in cooperative MARL \cite{Sukhbaatar2016CommNet,Foerster2016DIAL,Jiang2018ATOC,Das2019TarMAC,Peng2017BiCNet,Mordatch2018EmergentLanguage}. In a construction site, communication should not only transmit latent messages but also support task-progress sharing and collision-sensitive reservation. This links the problem to multi-agent path finding, where same-target conflicts, swap conflicts, and reservation mechanisms are central \cite{Sharon2015CBS,Stern2019MAPF,MaKoenig2016TAPF,Cap2015DecentralizedPlanning,Li2021LifelongMAPF}.
+
+The proposed framework is further motivated by human--machine teaming and experience calibration. Studies on automation reliance and human--robot interaction show that appropriate reliance is strongly affected by automation performance and learned experience \cite{LeeSee2004Trust,HoffBashir2015Trust,Hancock2011TrustHRI,ChenBarnes2014HumanAgentTeaming,GoodrichSchultz2007HRI,Parasuraman2000LevelsAutomation}. Instead of modeling latent psychological trust, this paper defines an operational experience state that is updated from observable construction feedback. This choice makes the mechanism directly measurable and compatible with MARL training, communication, and evaluation.
+
+
+\subsection{Contributions}
+
+This study makes four contributions.
+\begin{itemize}
+    \item It formulates a process-level intelligent-construction coordination task in which multiple human--machine dyads must jointly manage movement, build--inspect--rework execution, rework feedback, waiting, collision risk, and communication cost.
+    \item It proposes CCT-MARL, a hybrid learning-and-coordination framework that combines experience-conditioned policy learning, structured broadcast messages, and a task-progress reservation shield.
+    \item It separates shield attribution from policy learning by evaluating MAPPO+Shield, IQL+Shield, Greedy, and Greedy-Reservation baselines. Since shielded learning baselines also remove observed collisions, the empirical claim is deliberately framed around the full safety--efficiency--communication profile rather than collision alone.
+    \item It reports scalability and reward-sensitivity studies to test whether the conclusions depend on the compact 5$\times$5 setting or on a single reward-shaping term. The message aggregation operator is explicitly specified as mean aggregation in the reported implementation, and the experience manager is stated as a deterministic feedback updater rather than as an auxiliary supervised loss.
+\end{itemize}
+
+\section{Related Work}
+% ============================================================
+
+\subsection{Multi-Agent Reinforcement Learning}
+
+Multi-agent reinforcement learning extends single-agent reinforcement learning to settings where multiple agents interact in a shared environment \cite{SuttonBarto2018RL,Tan1993MARL}. Independent Q-learning is one of the earliest and simplest MARL paradigms, where each agent learns its own value function while treating other agents as part of the environment \cite{Tan1993MARL}.
+
+Value decomposition methods address cooperative MARL by decomposing a joint value function into agent-wise utilities. VDN assumes an additive decomposition of team value \cite{Sunehag2018VDN}, while QMIX introduces a monotonic mixing network to enable centralized training and decentralized execution \cite{Rashid2018QMIX}. QTRAN and QPLEX further improve the expressiveness of value factorization under individual-global consistency principles \cite{Son2019QTRAN,Wang2021QPLEX}.
+
+Policy-gradient and actor--critic methods provide another important MARL family. COMA uses a counterfactual baseline for multi-agent credit assignment \cite{Foerster2018COMA}. MADDPG uses centralized critics to stabilize decentralized policies in mixed cooperative--competitive environments \cite{Lowe2017MADDPG}. MAPPO shows that PPO-based methods can be highly competitive in cooperative multi-agent benchmarks \cite{Schulman2017PPO,Yu2022MAPPO}.
+
+Standardized benchmarks such as SMAC have promoted reproducible evaluation of cooperative MARL methods \cite{Samvelyan2019SMAC}. However, construction coordination differs from these benchmarks because it requires simultaneous modeling of spatial movement, task completion, machine quality, quality events, rework, and process-level safety.
+
+\subsection{Communication in MARL}
+
+Communication has been widely studied to improve cooperation under partial observability. CommNet learns continuous communication through backpropagation among cooperative agents \cite{Sukhbaatar2016CommNet}. DIAL enables differentiable inter-agent learning through communication channels during centralized training \cite{Foerster2016DIAL}. ATOC introduces attentional communication to determine when agents should communicate and how messages should be integrated \cite{Jiang2018ATOC}. TarMAC further studies targeted multi-agent communication, where agents learn both message content and message recipients \cite{Das2019TarMAC}.
+
+BiCNet and emergent-communication studies show that coordination structures and communication protocols can emerge from multi-agent learning \cite{Peng2017BiCNet,Mordatch2018EmergentLanguage}. In contrast, CCT-MARL does not aim to learn a general language protocol. Instead, it uses construction-feedback-driven experience messages to support coordination among human--machine dyads.
+
+\subsection{Multi-Agent Path Finding and Collision Avoidance}
+
+The movement component of intelligent construction coordination is related to multi-agent path finding (MAPF), where multiple agents need collision-free paths on a discrete graph \cite{Stern2019MAPF}. Conflict-Based Search is a classical optimal MAPF algorithm that resolves path conflicts through a constraint tree \cite{Sharon2015CBS}. Target assignment and path finding further combines task assignment with collision-free movement planning \cite{MaKoenig2016TAPF}.
+
+Lifelong MAPF extends MAPF to settings where agents continuously receive new goals, which is relevant to dynamic task execution in warehouses and construction-like environments \cite{Li2021LifelongMAPF}. Decentralized trajectory planning studies further show the importance of online coordination in multi-robot systems \cite{Cap2015DecentralizedPlanning}.
+
+\subsection{Shielded MARL, Reservation-Based Planning, and Mechanism Coupling}
+
+The proposed shield is not claimed as a standalone invention detached from prior planning literature. Its same-target, swap-conflict, and reservation-table logic is closely related to prioritized planning and conflict-based search in multi-agent path finding \cite{Sharon2015CBS,Stern2019MAPF,Li2021LifelongMAPF}. The intended contribution is therefore not that reservation itself is new, but that reservation-based correction is coupled with a learned policy conditioned on construction experience and communication. To test this claim, the experimental design includes MAPPO+Shield and IQL+Shield baselines. If shielded baselines match CCT-MARL, the contribution would reduce to the shield; if they do not, the remaining gap supports learned coupling between policy, experience, broadcast communication, and the shield.
+
+\subsection{Human--Machine Teaming and Experience Calibration}
+
+Human--machine teaming research emphasizes appropriate reliance, trust calibration, workload, and shared autonomy. Lee and See argued that trust guides reliance on automation when the system is complex and cannot be fully understood by the human operator \cite{LeeSee2004Trust}. Hoff and Bashir proposed a three-layered trust model integrating dispositional, situational, and learned trust \cite{HoffBashir2015Trust}. Hancock et al. showed through meta-analysis that robot performance is a major factor affecting trust in human--robot interaction \cite{Hancock2011TrustHRI}.
+
+Human--agent teaming for multirobot control further highlights the importance of interface design, workload, and coordination transparency \cite{ChenBarnes2014HumanAgentTeaming}. General HRI surveys also emphasize that human--robot collaboration should consider autonomy level, interaction context, and team performance \cite{GoodrichSchultz2007HRI,Parasuraman2000LevelsAutomation}.
+
+\subsection{Robotics and Human--Robot Collaboration in Construction}
+
+Construction robotics has been studied as a key direction for improving productivity, safety, and automation in the construction industry \cite{Bock2015FutureConstructionAutomation,BockLinner2016ConstructionRobots}. Digitisation and automation have also been recognized as important drivers of transformation in construction \cite{OesterreichTeuteberg2016DigitisationConstruction}.
+
+Recent multi-agent HRI and communication-MADRL surveys also emphasize that multi-human--multi-robot systems and communication design remain under-explored in complex teaming settings \cite{Dahiya2022MultiAgentHRI,Zhu2024CommMADRL}. The TIP model further shows how direct and indirect experience can be formalized in multi-human multi-robot teams \cite{Guo2024TIP}. Recent studies on construction human--robot collaboration identify important research directions such as taxonomy, autonomy level, collaboration mode, on-site operation, and safety \cite{Liang2021HRCConstruction,Zhang2023HRCOnSite,Rodrigues2023HRITaxonomy}. Several studies have investigated safety and interaction mechanisms in construction HRC, including perceived safety in immersive environments \cite{You2018PerceivedSafety}, brainwave-driven HRC \cite{Liu2021BrainwaveHRC}, and prediction-based path planning via deep reinforcement learning \cite{Cai2023PredictionPathPlanning}.
+
+\subsection{Scheduling and Reinforcement Learning for Resource Allocation}
+
+The construction coordination problem is also related to resource-constrained project scheduling, where activities must be scheduled under precedence and resource constraints \cite{KolischHartmann1999RCPSP,Hartmann2000HeuristicsRCPSP,HartmannBriskorn2010RCPSPSurvey}. Reinforcement learning has been applied to job-shop scheduling and resource-constrained project scheduling, showing its potential for learning dispatching or allocation policies \cite{ZhangDietterich1995JobShopRL,Sung2020RLRCPSP,Cai2024DRLRCPSP}.
+
+% ============================================================
+\section{Materials \& Methods}
+\subsection{Problem Formulation}
+% ============================================================
+
+\subsection{Construction Coordination Scenario}
+
+We consider a 5$\times$5 grid-based construction environment. The grid contains 25 construction cells that must be completed. Three human agents are paired with three non-learning machine resources, forming three dyads $D_1=(H_1,M_1)$, $D_2=(H_2,M_2)$, and $D_3=(H_3,M_3)$.
+
+
+The scenario abstracts a compact intelligent-construction site rather than a generic grid-world. Each dyad represents a human-side decision maker assisted by a machine resource. The human side learns the policy, while the machine side provides execution capability and produces process feedback. Each dyad starts from a boundary waiting/entry position, enters the construction grid, selects target cells, and executes construction-related operations under spatial and quality constraints. The three dyads must therefore coordinate both \emph{where} to move and \emph{when} to build, inspect, or rework.
+
+The construction site is partitioned into three approximately balanced work zones. These zones are not hard termination constraints; instead, they provide a structured prior for work allocation and route organization. In a typical rollout, a dyad first moves from the boundary entry point to its assigned region, then repeatedly identifies unfinished or rework-required cells, performs the required operation, and returns the resulting feedback to the experience manager. This design makes the scenario closer to construction coordination, where work packages, entry logistics, inspection outcomes, and rework loops jointly affect efficiency.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.5\textwidth]{figures/fig_scenario.pdf}
+\caption{Basic 5$\times$5 construction scenario. Three human--machine dyads enter from boundary positions and coordinate to complete all 25 cells. The scenario explicitly records spatial conflicts, waiting actions, rework events, and communication cost.}
+\label{fig:scenario_basic}
+\end{figure}
+
+Figure~\ref{fig:scenario_decomposition} gives a more detailed decomposition of the construction scenario. The left panel shows the spatial setting and edge-entry requirement. The middle panel clarifies the dyad-level role design: human-side agents learn policies, while machines are execution resources that influence build, inspect, and rework outcomes. The right panel shows the cell-level workflow. A cell is not treated as completed merely because an agent visits it; it must go through execution and inspection, and it may require rework before being counted as completed. This is the main difference between the proposed environment and a pure navigation benchmark.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/fig_scenario_decomposition_cropped.png}
+\caption{Scenario decomposition. The environment combines spatial coordination, human--machine dyad roles, and a build--inspect--rework cell lifecycle. This decomposition explains why makespan, waiting, collision, rework, and communication cost are jointly reported.}
+\label{fig:scenario_decomposition}
+\end{figure}
+
+The proposed environment is related to discrete multi-agent path-finding settings \cite{Stern2019MAPF,Sharon2015CBS}, because agents move on a graph-like workspace and must avoid spatial conflicts. Different from classical MAPF, agents also need to complete construction, inspection, and rework operations, and machine-assisted execution may lead to additional process feedback. The objective is to complete all cells efficiently and safely. Since all stable methods are expected to reach completion of all cells, the main evaluation focuses on process-level metrics such as makespan, waiting, collision, rework, and communication cost; the full result tables additionally report machine-abort and quality event-related metrics for completeness. The makespan objective is aligned with project scheduling literature \cite{HartmannBriskorn2010RCPSPSurvey}, while collision and movement conflicts are aligned with MAPF and construction HRC safety studies \cite{Stern2019MAPF,Cai2023PredictionPathPlanning,You2018PerceivedSafety}.
+
+\subsection{State and Observation}
+
+The global state at time step $t$ is defined as:
+\begin{equation}
+s_t = \{G_t, P_t, Q_t, F_t, R_t, C_t, t\},
+\end{equation}
+where $G_t$ denotes the grid construction state, $P_t$ denotes agent positions, $Q_t$ denotes machine-related quality information, $F_t$ denotes quality event states, $R_t$ denotes rework states, and $C_t$ denotes communication-related information.
+
+The grid state records whether each cell is empty, under construction, completed, or requiring rework. The position state records the current locations of the three dyads and their intended target cells. The feedback state records recent build, inspect, and rework outcomes. This design allows the learning problem to represent both spatial coordination and construction-process quality.
+
+Each agent receives a local observation:
+\begin{equation}
+o_{i,t} =
+\{g^{local}_{i,t}, p_{i,t}, q_{i,t}, E_{i,t}, \bar{m}_{i,t}\},
+\end{equation}
+where $g^{local}_{i,t}$ is the local grid observation, $p_{i,t}$ is the position of agent $i$, $q_{i,t}$ is machine-related feedback, $E_{i,t}$ is the dyad-level experience state, and $\bar{m}_{i,t}$ is the aggregated received message. The local observation is therefore not only a geometric view of nearby cells; it also contains construction-progress and quality-feedback information. This is necessary because an apparently short route may be undesirable if it causes congestion, ignores a rework-required cell, or moves a dyad away from unfinished tasks.
+
+\subsection{Action Space}
+
+Each agent selects an action from a discrete action space:
+\begin{equation}
+\mathcal{A}_i =
+\{\text{Wait}, \text{Up}, \text{Down}, \text{Left}, \text{Right},
+\text{Build}, \text{Inspect}, \text{Rework}, \text{MachineAssist}\}.
+\end{equation}
+
+Invalid actions are masked to prevent infeasible operations such as constructing an already completed cell or inspecting a cell without construction.
+
+\subsection{Reward Design}
+
+The reward is decomposed into progress, quality, safety, and communication terms:
+\begin{equation}
+r_t =
+r_t^{progress}
++
+r_t^{quality}
++
+r_t^{safety}
+-
+c_t^{comm}.
+\end{equation}
+
+The progress term rewards construction completion and short makespan. The quality term rewards successful inspection and penalizes rework-required feedback or failed repair. The safety term penalizes collisions, excessive waiting, and invalid movement. The communication term accounts for message cost.
+
+The episode return is:
+\begin{equation}
+R = \sum_{t=0}^{T} \gamma^t r_t.
+\end{equation}
+
+\subsection{Evaluation Metrics}
+
+The evaluation metrics are listed in Table~\ref{tab:metrics}.
+
+\begin{table}[htbp]
+\centering
+\caption{Evaluation metrics used in the main paper.}
+\label{tab:metrics}
+\begin{tabular}{lll}
+\toprule
+Metric & Meaning & Direction \\
+\midrule
+Return & Cumulative episode reward & Higher is better \\
+Makespan & Steps required to complete the task & Lower is better \\
+Waiting & Number of waiting actions & Lower is better \\
+Collision & Number of spatial conflicts & Lower is better \\
+Rework & Number of rework operations & Lower is better \\
+Bits & Communication cost & Lower is better \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.88\textwidth]{figures/fig_metric_evidence_chain_cropped.png}
+\caption{Metric evidence chain used in the experiments. Efficiency, safety, construction quality, and communication are reported jointly because the proposed task is a process-level construction coordination problem rather than a single-score navigation benchmark.}
+\label{fig:metric_chain}
+\end{figure}
+
+% ============================================================
+\subsection{CCT-MARL Framework}
+% ============================================================
+
+\subsubsection{Overview of CCT-MARL}
+
+CCT-MARL follows the centralized-training and decentralized-execution paradigm widely used in MARL \cite{Lowe2017MADDPG,Rashid2018QMIX,Yu2022MAPPO}. The policy is decentralized during execution, while training can exploit centralized value estimation and construction-level feedback.
+
+CCT-MARL consists of five key functional components: a decentralized policy module, a centralized critic module, a construction-feedback-driven experience manager, an experience-aware broadcast communication module, and a task-progress reservation shield. These components are deliberately separated. The policy proposes candidate actions; the experience manager converts build, inspect, and rework feedback into dyad-level experience states; the broadcast module shares compact progress and risk messages; the shield corrects candidate actions before execution; and the critic provides value-learning signals during training.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.99\textwidth]{figures/fig_framework_updated.png}
+\caption{Overall CCT-MARL framework. The framework is organized into scenario perception, collaborative learning, and execution feedback. The task-progress reservation shield is placed after the policy network and before the execution--inspection--rework module. It receives candidate actions, broadcast messages, and experience states, then outputs corrected actions through collision avoidance, target reservation, and progress correction.}
+\label{fig:framework}
+\end{figure}
+
+Figure~\ref{fig:framework} should be read as a closed-loop construction coordination pipeline. First, scenario and perception modules encode the grid, dyad positions, global progress, messages, and build/inspect/rework history. Second, collaborative learning modules update dyad-level experience states, broadcast compact messages, and generate candidate actions. Third, the task-progress reservation shield corrects candidate actions before they enter the execution--inspection--rework module. The execution feedback is then used in two ways: process feedback updates the experience manager, while reward and value-learning signals update the policy and centralized critic.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.95\textwidth]{figures/fig_cct_data_flows_cropped.png}
+\caption{Three data flows in CCT-MARL. The decision flow maps encoded observations to candidate actions; the experience flow converts construction feedback into dyad-level experience states; the communication--safety flow transforms experience into broadcast messages and corrected actions.}
+\label{fig:data_flows}
+\end{figure}
+
+\subsubsection{Experience State and Update}
+
+The experience manager is inspired by the idea that automation reliance should be calibrated through performance feedback \cite{LeeSee2004Trust,HoffBashir2015Trust,Hancock2011TrustHRI}. However, rather than modeling latent psychological trust, CCT-MARL uses explicit construction evidence, including build, inspect, and rework outcomes.
+
+For each dyad $D_i$, the experience state is represented by a Beta-style pair:
+\begin{equation}
+E_{i,t} = (\alpha_{i,t}, \beta_{i,t}),
+\end{equation}
+where $\alpha_{i,t}$ denotes accumulated positive evidence and $\beta_{i,t}$ denotes accumulated negative evidence.
+
+The experience mean is:
+\begin{equation}
+\mu_{i,t}
+=
+\frac{\alpha_{i,t}}
+{\alpha_{i,t}+\beta_{i,t}+\epsilon}.
+\end{equation}
+
+Positive evidence is generated by successful build, passed inspection, or successful rework, while negative evidence is generated by failed inspection, rework-required feedback, or failed rework. The update rules are:
+\begin{equation}
+\alpha_{i,t+1}
+=
+\alpha_{i,t}
++
+\eta_{pos} e^+_{i,t},
+\end{equation}
+and
+\begin{equation}
+\beta_{i,t+1}
+=
+\beta_{i,t}
++
+\eta_{neg} e^-_{i,t},
+\end{equation}
+where $e^+_{i,t}$ and $e^-_{i,t}$ are positive and negative feedback signals, and $\eta_{pos}$ and $\eta_{neg}$ control update sensitivity.
+
+\subsubsection{Broadcast Communication and Message Aggregation}
+
+Broadcast communication follows the MARL communication literature \cite{Sukhbaatar2016CommNet,Foerster2016DIAL,Jiang2018ATOC,Das2019TarMAC}, but the default message content is construction-specific rather than a fully learned latent language. Each dyad broadcasts a compact structured message:
+\begin{equation}
+ m_{i,t}=f_m(o_{i,t},E_{i,t},\rho_{i,t},g_{i,t}),
+\end{equation}
+where $\rho_{i,t}$ denotes local collision or rework risk and $g_{i,t}$ denotes local task-progress information. In the current implementation, $f_m(\cdot)$ is a deterministic encoder over observation, experience, and risk features. This design is intentionally interpretable, but it should not be over-claimed as learned communication.
+
+The default aggregation operator is mean aggregation:
+\begin{equation}
+\bar{m}_{i,t}=\frac{1}{N-1}\sum_{j\neq i}m_{j,t}.
+\label{eq:mean_agg}
+\end{equation}
+This explicitly resolves the previous ambiguity in $\mathrm{Aggregate}(\{m_j\}_{j\neq i})$. The reported implementation uses this structured mean operator; learned attention-based message weighting is left for future work and is not used in the reported numerical claims.
+
+The policy input is:
+\begin{equation}
+ x_{i,t}=[o_{i,t},E_{i,t},\bar{m}_{i,t}],
+\end{equation}
+and the candidate action is sampled from:
+\begin{equation}
+ a_{i,t}\sim\pi_{\theta}(\cdot\mid x_{i,t}).
+\end{equation}
+
+\subsubsection{Task-Progress Reservation Shield}
+
+The task-progress reservation shield is related to conflict resolution in MAPF \cite{Sharon2015CBS,Stern2019MAPF,Li2021LifelongMAPF}. It detects same-target, swap, and occupied-cell conflicts, constructs a local reservation table, and replaces unsafe or unnecessary waiting actions with safe alternatives when possible.
+
+CCT-MARL uses the task-progress reservation shield to balance safety and efficiency. The shield contains three stages and is applied after the policy network.
+
+\subsubsection{Conflict Detection}
+
+For each movement action, the shield predicts the target cell:
+\begin{equation}
+\hat{p}_{i,t+1}
+=
+\mathrm{Target}(p_{i,t}, a_{i,t}).
+\end{equation}
+
+The following risks are detected:
+\begin{itemize}
+    \item same-target conflict: two agents move to the same cell;
+    \item swap conflict: two agents exchange positions simultaneously;
+    \item occupied-cell conflict: an agent moves into a cell occupied by a non-moving agent.
+\end{itemize}
+
+\subsubsection{Reservation-Based Resolution}
+
+A local reservation table $\mathcal{R}_t$ is constructed. Safe movements are preserved:
+\begin{equation}
+a'_{i,t} = a_{i,t}, \quad
+\hat{p}_{i,t+1} \in \mathcal{R}_t.
+\end{equation}
+
+Risky movements are replaced by safe alternatives:
+\begin{equation}
+a'_{i,t}
+=
+\arg\min_{a \in \mathcal{A}^{safe}_{i,t}}
+\mathrm{RegScore}
+\left(
+i,
+\mathrm{Target}(p_{i,t},a)
+\right),
+\end{equation}
+where $\mathrm{RegScore}(\cdot)$ measures region consistency and congestion avoidance.
+
+\subsubsection{Fast-Progress Override}
+
+If an agent selects \textsc{Wait} but a safe movement exists, the shield replaces the waiting action:
+\begin{equation}
+a'_{i,t}
+=
+\begin{cases}
+a^{safe}_{i,t}, & \text{if } a_{i,t}=\textsc{Wait} \text{ and } \mathcal{A}^{safe}_{i,t}\neq \emptyset,\\
+a_{i,t}, & \text{otherwise}.
+\end{cases}
+\end{equation}
+
+This mechanism reduces unnecessary waiting while preserving collision-aware coordination.
+
+To distinguish a policy that merely relies on post-processing from a policy that is compatible with the shield, the following intervention-rate diagnostic can be computed:
+\begin{equation}
+\rho_{\mathrm{shield}}=\frac{1}{NT}\sum_{t=1}^{T}\sum_{i=1}^{N}\mathbb{I}\left[a_{i,t}\neq \tilde{a}_{i,t}\right],
+\label{eq:shield_intervention}
+\end{equation}
+where $a_{i,t}$ is the policy-proposed candidate action and $\tilde{a}_{i,t}$ is the corrected action executed by the environment. A lower intervention rate under comparable collision control would indicate stronger compatibility between the policy and the shield. The empirical comparison in this manuscript focuses on the six process metrics that are consistently defined for all learning and heuristic baselines.
+
+\subsubsection{Training Objective and Experience-Coupled Extension}
+
+The reported CCT-MARL implementation optimizes the reinforcement-learning objective and treats experience states as structured inputs rather than as separately supervised latent variables. To avoid overstating the implemented optimization, the default objective is written as:
+\begin{equation}
+\mathcal{L}_{\mathrm{default}}=\mathcal{L}_{\mathrm{RL}}+\lambda_{reg}\mathcal{L}_{reg},
+\end{equation}
+where $\mathcal{L}_{\mathrm{RL}}$ is the actor--critic learning objective and $\mathcal{L}_{reg}$ denotes standard regularization. Communication cost is included through environment reward accounting and is reported as the Bits metric; it is not optimized as a separate differentiable communication loss in the current reported results.
+
+As a future gradient-coupled extension, an auxiliary experience-prediction loss can connect the experience manager to the optimization objective:
+\begin{equation}
+\mathcal{L}_{\mathrm{exp}}=\frac{1}{NT}\sum_{i,t}\mathrm{BCE}(\hat{y}^{rw}_{i,t+1},y^{rw}_{i,t+1})+\lambda_q\lVert \hat{q}_{i,t+1}-q_{i,t+1}\rVert_2^2,
+\label{eq:exp_aux_loss}
+\end{equation}
+where $\hat{y}^{rw}_{i,t+1}$ predicts whether the next outcome requires rework and $\hat{q}_{i,t+1}$ predicts a continuous quality proxy. The auxiliary variant would optimize:
+\begin{equation}
+\mathcal{L}_{\mathrm{aux}}=\mathcal{L}_{\mathrm{RL}}+\lambda_{exp}\mathcal{L}_{\mathrm{exp}}+\lambda_{reg}\mathcal{L}_{reg}.
+\end{equation}
+This auxiliary objective is specified to clarify how future versions can make the experience manager gradient-coupled; it is not included in the reported numerical comparisons.
+
+\subsubsection{Algorithm}
+\begin{algorithm}[htbp]
+\caption{CCT-MARL Training}
+\label{alg:cct_training}
+\begin{algorithmic}[1]
+\STATE Initialize policy network $\pi_{\theta}$
+\STATE Initialize centralized critic $V_{\psi}$
+\STATE Initialize experience states $E_i=(\alpha_i,\beta_i)$ for all dyads
+\FOR{episode $=1$ to $N$}
+    \STATE Reset construction environment
+    \FOR{time step $t=1$ to $T$}
+        \FOR{each agent $i$}
+            \STATE Observe local state $o_{i,t}$
+            \STATE Encode experience state $E_{i,t}$
+            \STATE Broadcast message $m_{i,t}$
+            \STATE Aggregate received messages $\bar{m}_{i,t}$
+            \STATE Select candidate action $a_{i,t} \sim \pi_{\theta}(\cdot \mid x_{i,t})$
+        \ENDFOR
+        \STATE Detect movement conflicts among candidate actions
+        \STATE Apply task-progress reservation shield to obtain adjusted actions $a'_{i,t}$
+        \STATE Execute adjusted actions in the environment
+        \STATE Receive reward $r_t$, next observations, and construction feedback
+        \STATE Update experience states using build, inspect, and rework signals
+        \STATE Store transition in rollout buffer
+    \ENDFOR
+    \STATE Update policy network and critic network
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+\begin{algorithm}[htbp]
+\caption{Task-Progress Reservation Shield}
+\label{alg:shield}
+\begin{algorithmic}[1]
+\REQUIRE Candidate actions $\{a_{i,t}\}$, positions $\{p_{i,t}\}$, active-agent mask
+\ENSURE Adjusted actions $\{a'_{i,t}\}$ and communication bits
+\STATE Predict target cells for all movement actions
+\STATE Detect same-target, swap, and occupied-cell conflicts
+\STATE Initialize reservation table $\mathcal{R}_t$
+\FOR{each safe movement action}
+    \STATE Preserve the original movement
+    \STATE Reserve the target cell
+\ENDFOR
+\FOR{each risky movement action}
+    \STATE Search for a safe alternative movement
+    \IF{a safe movement exists}
+        \STATE Replace the risky action with the safe movement
+        \STATE Reserve the new target cell
+    \ELSE
+        \STATE Replace the risky action with \textsc{Wait}
+    \ENDIF
+\ENDFOR
+\FOR{each agent selecting \textsc{Wait}}
+    \IF{a safe progress movement exists}
+        \STATE Replace \textsc{Wait} with the safe progress movement
+        \STATE Reserve the new target cell
+    \ENDIF
+\ENDFOR
+\STATE Return adjusted actions and communication bits
+\end{algorithmic}
+\end{algorithm}
+
+% ============================================================
+
+% ============================================================
+\section{Results}
+% ============================================================
+
+\subsection{Experimental Protocol}
+
+The default environment is a 5$\times$5 construction grid with three human--machine dyads and 25 task cells. Each episode terminates when all cells are completed or when the maximum horizon is reached. The reported protocol uses five random seeds and 100 final evaluation episodes per seed. All methods are evaluated with the same action space, state encoding, and construction workflow. The main metrics are Return, Makespan, Waiting, Collision, Rework, and Bits. Completion coverage and low-level quality diagnostics are used internally as sanity checks, but they are not included in the main tables to keep the paper focused on process-level coordination.
+
+The experimental design is organized around mechanism attribution rather than scalar dominance. First, shielded baselines apply the same task-progress reservation shield to existing learning policies, especially IQL+Shield and MAPPO+Shield. Second, heuristic baselines include Greedy nearest-task assignment and Greedy-Reservation with prioritized planning. Third, scalability and reward-sensitivity settings test whether the conclusion depends on the small 5$\times$5 setting or on a single reward-shaping configuration. This structure makes the empirical question explicit: whether CCT-MARL provides a stable process-level coordination profile beyond what can be obtained from shielding, hand-coded reservation, or reward shaping alone.
+
+\subsection{Main Comparison}
+
+\begin{table}[htbp]
+\centering
+\caption{Main comparison under the default construction scenario. The shielded learning rows show that zero collision can also be obtained by applying the same shield to baselines; therefore, the relevant comparison is the full safety--efficiency--communication profile rather than collision alone.}
+\label{tab:main_comparison}
+\resizebox{0.98\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+Method & Return $\uparrow$ & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Rework $\downarrow$ & Bits \\
+\midrule
+Greedy & $222.04\pm0.40$ & $41.43\pm0.12$ & $0.00\pm0.00$ & $48.44\pm0.27$ & $3.75\pm0.04$ & $0.00\pm0.00$ \\
+Greedy-Reservation & $284.40\pm0.22$ & $24.80\pm0.05$ & $0.00\pm0.00$ & $1.38\pm0.06$ & $3.77\pm0.06$ & $0.00\pm0.00$ \\
+IQL & $283.99\pm1.78$ & $28.01\pm3.17$ & $9.75\pm3.33$ & $1.14\pm0.66$ & $3.67\pm0.12$ & $0.00\pm0.00$ \\
+IQL+Shield & $284.55\pm0.64$ & $27.05\pm1.06$ & $6.90\pm1.13$ & $0.00\pm0.00$ & $3.71\pm0.11$ & $0.00\pm0.00$ \\
+VDN & $285.22\pm1.27$ & $26.94\pm1.40$ & $9.17\pm2.78$ & $0.41\pm0.49$ & $3.71\pm0.11$ & $0.00\pm0.00$ \\
+MAPPO & $286.50\pm1.10$ & $21.49\pm0.42$ & $2.04\pm0.07$ & $0.69\pm0.28$ & $3.67\pm0.22$ & $0.00\pm0.00$ \\
+MAPPO+Shield & $281.36\pm10.54$ & $27.64\pm14.29$ & $2.18\pm0.35$ & $0.00\pm0.00$ & $3.68\pm0.15$ & $0.00\pm0.00$ \\
+CCT-MARL & $287.19\pm0.65$ & $21.36\pm0.29$ & $4.84\pm0.61$ & $0.00\pm0.00$ & $3.70\pm0.18$ & $242.34\pm5.73$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The heuristic comparison shows that a nearest-task Greedy policy is insufficient for this construction scenario: it produces many collisions despite zero communication cost. Greedy-Reservation is substantially stronger, confirming that reservation-based coordination is a meaningful planning prior. However, it still has longer makespan than CCT-MARL and cannot model dyad-level experience or communication. MAPPO+Shield and IQL+Shield demonstrate that the shield itself is effective at removing collisions. This result is important: it prevents the paper from claiming collision removal as an exclusive effect of the learned policy. The remaining contribution is therefore framed as learned coupling: CCT-MARL achieves collision-free execution with lower variance and competitive makespan while explicitly paying communication cost.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=1.00\textwidth]{figures/fig_main_metrics_clean.pdf}
+\caption{Main-result visualization under the default profile. CCT-MARL maintains competitive efficiency while reducing collisions to zero; the improvement is achieved with explicit communication cost measured by Bits.}
+\label{fig:main_metrics}
+\end{figure}
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/fig_shielded_baselines_response.pdf}
+\caption{Shielded and heuristic baselines. Adding the shield removes collisions for the learning baselines, but MAPPO+Shield shows a longer-tail makespan profile, while Greedy and Greedy-Reservation expose the limits of purely rule-based coordination.}
+\label{fig:shielded_baselines_response}
+\end{figure}
+
+\subsection{Shielded Baseline and Learned-Coupling Study}
+
+\begin{table}[htbp]
+\centering
+\caption{Shielded baseline and learned-coupling study. Collision is zero for shielded learning variants; the table therefore focuses on return, makespan, waiting, rework, and communication cost.}
+\label{tab:shielded_baselines}
+\resizebox{0.98\textwidth}{!}{
+\begin{tabular}{llcccccc}
+\toprule
+Method & Shield & Return $\uparrow$ & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Rework $\downarrow$ & Bits \\
+\midrule
+IQL & No & $283.99\pm1.78$ & $28.01\pm3.17$ & $9.75\pm3.33$ & $1.14\pm0.66$ & $3.67\pm0.12$ & $0.00\pm0.00$ \\
+MAPPO & No & $286.50\pm1.10$ & $21.49\pm0.42$ & $2.04\pm0.07$ & $0.69\pm0.28$ & $3.67\pm0.22$ & $0.00\pm0.00$ \\
+CCT-MARL w/o Shield & No & $282.21\pm3.59$ & $23.11\pm1.51$ & $2.03\pm0.03$ & $3.96\pm2.56$ & $3.64\pm0.17$ & $231.30\pm1.45$ \\
+IQL+Shield & Yes & $284.55\pm0.64$ & $27.05\pm1.06$ & $6.90\pm1.13$ & $0.00\pm0.00$ & $3.71\pm0.11$ & $0.00\pm0.00$ \\
+MAPPO+Shield & Yes & $281.36\pm10.54$ & $27.64\pm14.29$ & $2.18\pm0.35$ & $0.00\pm0.00$ & $3.68\pm0.15$ & $0.00\pm0.00$ \\
+CCT-MARL & Yes & $287.19\pm0.65$ & $21.36\pm0.29$ & $4.84\pm0.61$ & $0.00\pm0.00$ & $3.70\pm0.18$ & $242.34\pm5.73$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+This study tests whether the reservation shield alone can reproduce the full CCT-MARL behavior. The shield eliminates observed collisions for the shielded learning baselines, so zero collision is not used as a standalone novelty claim. The comparison instead emphasizes the complete performance profile: MAPPO+Shield exhibits a long-tail makespan and larger variance, whereas CCT-MARL maintains stable makespan and competitive return while paying an explicit communication cost. IQL+Shield is included as a diagnostic shielded independent-learning baseline; it confirms collision removal under shielding but does not alter the main interpretation.
+
+\subsection{Component Ablation}
+
+\begin{table}[htbp]
+\centering
+\caption{Component ablation of CCT-MARL.}
+\label{tab:ablation}
+\resizebox{0.90\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+Variant & Return $\uparrow$ & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Rework $\downarrow$ & Bits \\
+\midrule
+Full CCT-MARL & $287.19\pm0.65$ & $21.36\pm0.29$ & $4.84\pm0.61$ & $0.00\pm0.00$ & $3.70\pm0.18$ & $242.34\pm5.73$ \\
+w/o Experience & $286.88\pm0.45$ & $21.33\pm0.20$ & $4.87\pm0.53$ & $0.00\pm0.00$ & $3.79\pm0.11$ & $14.53\pm5.89$ \\
+w/o Broadcast & $280.50\pm2.07$ & $24.93\pm2.02$ & $2.04\pm0.08$ & $4.73\pm1.34$ & $3.71\pm0.13$ & $0.00\pm0.00$ \\
+w/o Task-progress Shield & $282.21\pm3.59$ & $23.11\pm1.51$ & $2.03\pm0.03$ & $3.96\pm2.56$ & $3.64\pm0.17$ & $231.30\pm1.45$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Removing broadcast communication eliminates message cost but increases collisions and makespan, showing that communication is not only an accounting overhead but also a coordination signal. Removing the task-progress shield keeps broadcast active, yet collision rises, showing that messages must be converted into executable safety constraints. The w/o Experience variant is close to the full model under the default quality profile, so the role of experience is interpreted cautiously and further tested under heterogeneous quality and auxiliary-loss variants.
+
+\subsection{Scalability}
+
+\begin{table}[htbp]
+\centering
+\caption{Scalability study. The 8$\times$8 and 10$\times$10 rows are complete five-seed CCT-MARL runs. The 20$\times$20 row is a proof-of-scale sanity run and should not be interpreted as a fully tuned benchmark.}
+\label{tab:scalability}
+\resizebox{0.90\textwidth}{!}{
+\begin{tabular}{llccccc}
+\toprule
+Grid & Dyads & Method & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Bits \\
+\midrule
+5$\times$5 & 3 & MAPPO & $21.49\pm0.42$ & $2.04\pm0.07$ & $0.69\pm0.28$ & $0.00\pm0.00$ \\
+5$\times$5 & 3 & CCT-MARL & $21.36\pm0.29$ & $4.84\pm0.61$ & $0.00\pm0.00$ & $242.34\pm5.73$ \\
+8$\times$8 & 5 & CCT-MARL & $36.16\pm0.58$ & $14.24\pm1.60$ & $0.00\pm0.00$ & $702.24\pm61.61$ \\
+10$\times$10 & 8 & CCT-MARL & $39.42\pm1.07$ & $35.06\pm4.42$ & $0.00\pm0.00$ & $1171.42\pm118.01$ \\
+20$\times$20 & 10 & CCT-MARL (sanity) & $121.10$ & $105.80$ & $0.00$ & $4700.80$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The scaling experiment shows that the implementation can be executed beyond the compact 5$\times$5 setting. As expected, makespan, waiting, rework, and communication cost increase with the number of cells and dyads. The key interpretation is not that the large-grid policy is already globally optimal, but that the same framework and shielded execution interface remains operational on 8$\times$8 and 10$\times$10 construction maps while retaining zero collision. The 20$\times$20 row is reported only as a proof-of-scale sanity check because it is a single proof-of-scale run rather than a complete multi-seed benchmark.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.98\textwidth]{figures/fig_scalability_response.pdf}
+\caption{Scalability evidence. Makespan, waiting, and communication bits increase with task scale, but the same shielded execution interface remains operational and collision-free on larger grids.}
+\label{fig:scalability_response}
+\end{figure}
+
+\subsection{Reward Sensitivity}
+
+\begin{table}[htbp]
+\centering
+\caption{Reward-sensitivity analysis. Each variant removes one reward component while keeping the CCT-MARL architecture unchanged. Shielded execution keeps collision at zero, so the main sensitivity appears in scalar return, makespan, waiting, rework, and communication cost.}
+\label{tab:reward_sensitivity}
+\resizebox{0.90\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+Reward setting & Return $\uparrow$ & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Rework $\downarrow$ & Bits \\
+\midrule
+Full reward & $287.26\pm0.58$ & $21.26\pm0.77$ & $5.18\pm0.78$ & $0.00\pm0.00$ & $3.69\pm0.08$ & $248.92\pm9.65$ \\
+w/o speed bonus & $191.92\pm0.38$ & $21.64\pm0.49$ & $5.32\pm0.91$ & $0.00\pm0.00$ & $3.53\pm0.11$ & $256.34\pm21.50$ \\
+w/o waiting penalty & $287.58\pm0.60$ & $21.22\pm0.13$ & $4.78\pm0.40$ & $0.00\pm0.00$ & $3.66\pm0.17$ & $243.96\pm5.37$ \\
+w/o collision penalty & $287.28\pm0.65$ & $21.40\pm0.34$ & $4.96\pm0.56$ & $0.00\pm0.00$ & $3.69\pm0.18$ & $258.10\pm8.46$ \\
+w/o invalid-action penalty & $287.26\pm0.58$ & $21.26\pm0.77$ & $5.18\pm0.78$ & $0.00\pm0.00$ & $3.69\pm0.08$ & $248.92\pm9.65$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+This analysis responds to the possibility that the reward function itself encodes much of the coordination behavior. The speed bonus has the largest direct effect on the scalar return because it is part of the terminal reward calculation, but removing it does not collapse makespan or rework. Removing waiting, collision, or invalid-action terms produces moderate changes in process metrics rather than a complete failure. Since shielded execution keeps collision at zero even when the collision penalty is removed, the experiment also clarifies the division of labor between learning and shielding: reward shaping guides task progress and efficiency, while the shield enforces local spatial safety. The appropriate conclusion is therefore not that reward shaping is irrelevant, but that the observed coordination is not solely attributable to a single shaping term.
+
+\subsection{Robustness under Machine Quality Perturbations}
+
+\begin{table}[htbp]
+\centering
+\caption{Robustness under machine-quality perturbations. Results are mean $\pm$ std over five seeds.}
+\label{tab:robustness}
+\resizebox{0.94\textwidth}{!}{
+\begin{tabular}{llcccccc}
+\toprule
+Profile & Method & Return $\uparrow$ & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Rework $\downarrow$ & Bits \\
+\midrule
+default & MAPPO & $286.50 \pm 1.10$ & $21.49 \pm 0.42$ & $2.04 \pm 0.07$ & $0.69 \pm 0.28$ & $3.67 \pm 0.22$ & $0.00 \pm 0.00$ \\
+default & CCT-MARL & $287.19 \pm 0.65$ & $21.36 \pm 0.29$ & $4.84 \pm 0.61$ & $0.00 \pm 0.00$ & $3.70 \pm 0.18$ & $242.34 \pm 5.73$ \\
+wide & MAPPO & $287.39 \pm 0.91$ & $21.53 \pm 0.41$ & $2.15 \pm 0.18$ & $0.71 \pm 0.28$ & $3.36 \pm 0.19$ & $0.00 \pm 0.00$ \\
+wide & CCT-MARL & $289.33 \pm 0.28$ & $21.31 \pm 0.37$ & $4.83 \pm 0.74$ & $0.00 \pm 0.00$ & $3.08 \pm 0.09$ & $251.56 \pm 16.33$ \\
+stress & MAPPO & $283.80 \pm 1.47$ & $21.99 \pm 0.56$ & $2.56 \pm 0.88$ & $0.66 \pm 0.37$ & $4.21 \pm 0.31$ & $0.00 \pm 0.00$ \\
+stress & CCT-MARL & $285.34 \pm 0.65$ & $21.69 \pm 0.26$ & $4.96 \pm 0.27$ & $0.00 \pm 0.00$ & $4.02 \pm 0.20$ & $266.10 \pm 11.26$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+Across the wide and stress profiles, CCT-MARL preserves collision-free execution and competitive makespan. The robustness result should be interpreted together with the communication cost: larger feedback heterogeneity makes communication more useful, but it also increases Bits. This is consistent with the paper's safety--efficiency--communication positioning.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.92\textwidth]{figures/fig_robustness_metrics_clean.pdf}
+\caption{Robustness visualization under machine-quality perturbations. The figure highlights Return, Makespan, and Collision as the clearest visual indicators of the safety--efficiency trend.}
+\label{fig:robustness_visual}
+\end{figure}
+
+\subsection{Training Dynamics}
+Training dynamics are reported using the CCT-MARL trajectory only. We visualize Return, Makespan, Waiting, and Collision to show convergence of the proposed method without crowding the plot with baseline curves.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.82\textwidth]{figures/fig_learning_curves_cct_only.pdf}
+\caption{Training dynamics of CCT-MARL on Return, Makespan, Waiting, and Collision. The figure reports the proposed method only to make its convergence behavior readable without baseline overlap.}
+\label{fig:learning_curves}
+\end{figure}
+
+\subsection{Trajectory-Level Analysis}
+A fixed construction instance is used to visualize the learned behavior. The visualization includes entry points, movement paths, waiting positions, rework events, and completed regions.
+
+\begin{figure}[htbp]
+\centering
+\includegraphics[width=0.72\textwidth]{figures/fig_cct_trajectory.pdf}
+\caption{Trajectory-level visualization of CCT-MARL on a fixed construction instance. Colors represent different human--machine dyads and markers denote process-level events.}
+\label{fig:trajectory}
+\end{figure}
+
+\subsection{Prior-Work Comparison in Construction HRC}
+A direct numerical comparison with construction HRC prior work is difficult because existing studies often use different task scales, sensors, robot models, and evaluation endpoints. Instead, Table~\ref{tab:construction_prior} gives a scenario-level comparison with representative construction HRC and DRL studies.
+
+\begin{table}[htbp]
+\centering
+\caption{Qualitative comparison with representative construction HRC and DRL prior work.}
+\label{tab:construction_prior}
+\resizebox{0.94\textwidth}{!}{
+\begin{tabular}{lcccc}
+\toprule
+Study & Multi-dyad coordination & Build--inspect--rework loop & Explicit communication cost & Shielded MARL evaluation \\
+\midrule
+You et al. \cite{You2018PerceivedSafety} & No & No & No & No \\
+Liu et al. \cite{Liu2021BrainwaveHRC} & No & No & No & No \\
+Cai et al. \cite{Cai2023PredictionPathPlanning} & Limited & No & No & No \\
+CCT-MARL & Yes & Yes & Yes & Yes \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\subsection{Statistical Significance and Computational Cost}
+Statistical significance is tested using Welch's $t$-test, Mann--Whitney U test, and Cohen's $d$. The tested metrics include Return, Makespan, Waiting, Collision, and Bits.
+
+\begin{table}[htbp]
+\centering
+\caption{Statistical significance and effect size for CCT-MARL versus MAPPO.}
+\label{tab:stats}
+\begin{tabular}{lccc}
+\toprule
+Metric & Welch $p$ & Mann--Whitney $p$ & Cohen's $d$ \\
+\midrule
+Return & 0.270 & 0.421 & 0.762 \\
+Makespan & 0.589 & 0.841 & -0.358 \\
+Waiting & $4.67\times10^{-4}$ & 0.0119 & 6.431 \\
+Collision & 0.0050 & 0.0075 & -3.540 \\
+Bits & $7.48\times10^{-8}$ & 0.0075 & 59.837 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ============================================================
+\section{Discussion}
+% ============================================================
+
+\subsection{Mechanism Interpretation}
+
+CCT-MARL links construction feedback with future coordination. Build, inspect, and rework outcomes are accumulated as experience and used in later decisions. Broadcast communication allows dyads to share experience and risk information, while the reservation shield converts communication into concrete collision-aware movement coordination.
+
+\subsection{Safety--Efficiency Trade-off}
+
+The transition from earlier CCT variants to the final implementation reveals a safety--efficiency trade-off. A purely safety-oriented shield can reduce collisions but may increase waiting and makespan. The task-progress reservation shield addresses this issue by replacing unnecessary waiting with safe progress movements.
+
+\subsection{Limitations}
+
+This study has several limitations. First, the main environment is a 5$\times$5 grid, which is suitable for controlled mechanism analysis but still smaller than real construction sites. Second, machines are modeled as non-learning execution resources. Third, the current communication structure is broadcast-based and may be further optimized. Fourth, additional validation is required on larger grids, more dyads, and real construction process data.
+
+\section{Conclusions}
+% ============================================================
+
+This study investigated human-machine collaborative construction as a process-level multi-agent coordination problem rather than a generic navigation task. We formulated a build-inspect-rework environment in which multiple human-machine dyads must coordinate spatial movement, construction execution, inspection feedback, rework, communication, and collision avoidance. Based on this setting, we proposed CCT-MARL, a construction-oriented hybrid multi-agent reinforcement learning framework that couples experience-conditioned policy learning, structured broadcast communication, and task-progress reservation shielding.
+
+The ablation results clarify the role and limitations of each component. Although shielded baselines can eliminate collisions with the reservation mechanism, CCT-MARL provides a more stable safety-efficiency-communication profile by integrating construction feedback, dyad-level experience states, broadcast information, and shielded execution into a unified decision process. Comparisons with greedy and greedy-reservation baselines further indicate that simple task heuristics and handcrafted reservation rules are insufficient to guarantee full coordination across the build-inspect-rework process. Scalability experiments on larger 8×8 and 10×10 layouts, together with a 20×20 proof-of-scale run, suggest that the proposed framework can be extended beyond the default compact scenario. Reward-sensitivity analysis also shows that the method is affected by the construction-domain reward settings and that its optimization cannot be achieved solely with the reward.
+
+Overall, the main contribution of CCT-MARL is not a standalone algorithmic module, but a coupled framework for construction-oriented multi-agent coordination. It provides an explicit experimental separation between learned coordination, rule-based safety correction, heuristic planning, communication cost, and reward design. This separation is important for intelligent construction applications, where safety constraints and process feedback must be incorporated alongside learning-based decision-making. Future work will extend the current mean broadcast operator to learnable and attention-based message aggregation, connect the experience manager more directly to gradient-based auxiliary objectives, and evaluate the framework in richer construction scenarios with heterogeneous machines, uncertain task durations, and real-world site constraints.
+\appendix
+% ============================================================
+
+\section{Environment Details}
+
+This appendix describes the full environment configuration used in the reported results. The grid has 25 task cells, three human-side learning agents, and three paired machine resources. Each episode ends when all cells are completed or when the maximum horizon of 420 steps is reached. The environment exposes local observations, global progress, action masks, machine/inspection history, broadcast messages, and build/inspect/rework feedback.
+
+The construction scenario contains four coupled layers. The first layer is the spatial layer, where agents move on the 5$\times$5 grid and must avoid same-target, swap, and occupied-cell conflicts. The second layer is the task layer, where each cell must be built, inspected, and potentially reworked. The third layer is the dyad layer, where each learning human-side agent is paired with a machine resource. The fourth layer is the information layer, where local observations, dyad-level experience states, and broadcast messages are combined before action selection. This layered definition is used to make the task more construction-specific than a pure navigation benchmark.
+
+\begin{table}[htbp]
+\centering
+\caption{Scenario layers and their modeling roles.}
+\label{tab:scenario_layers}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{lll}
+\toprule
+Layer & Modeling content & Evaluation relevance \\
+\midrule
+Spatial layer & 5$\times$5 grid, boundary entry, target cells, occupied cells & Makespan, waiting, collision \\
+Task layer & build, inspect, rework, completed/rework-required cell states & Rework and task progress \\
+Dyad layer & H1--M1, H2--M2, H3--M3; human-side policy and machine execution & Dyad-level experience \\
+Information layer & local observation, global progress, experience state, broadcast message & Bits, policy input, shield correction \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Environment specification.}
+\label{tab:env_detail}
+\begin{tabular}{ll}
+\toprule
+Item & Setting \\
+\midrule
+Grid size & $5\times5$ \\
+Task cells & 25 \\
+Dyads & 3 H--M dyads \\
+Learning agents & Human-side agents \\
+Machine role & Non-learning execution resources \\
+Entry mode & Boundary entry / waiting zone \\
+Actions & wait, move, build, inspect, rework, machine assist \\
+Feedback & build / inspect / rework, waiting, collision, Bits \\
+Quality profiles & default, wide, stress \\
+Termination & all cells completed or 420 steps \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Cell-level lifecycle in the construction scenario.}
+\label{tab:cell_lifecycle}
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llll}
+\toprule
+Stage & Triggering action & Possible outcome & Feedback destination \\
+\midrule
+Targeting & move / wait & target cell reached or congestion occurs & shield and policy input \\
+Construction & build / machine assist & cell becomes completed or requires inspection/rework & experience manager and reward \\
+Inspection & inspect & pass, fail, or rework-required confirmation & experience manager \\
+Rework & rework & repair success or rework failure & experience manager and reward \\
+Completion & all cells completed & episode success and terminal speed bonus & final evaluation metrics \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\section{Reward Design, Shaping Sensitivity, and Attribution}
+\label{app:reward}
+
+This appendix documents the reward design and the sensitivity protocol. The reward is deliberately shaped because construction coordination is not a sparse-reward navigation problem. However, this also introduces an attribution risk: performance may come from reward engineering rather than from the proposed mechanism. The reward-sensitivity experiments therefore perturb individual reward components rather than treating the default reward as unquestionable.
+
+\begin{table}[htbp]
+\centering
+\caption{Reward components used in the default construction environment. Values are reported as the implementation-level default and can be perturbed in the sensitivity study.}
+\label{tab:reward_components}
+\resizebox{0.92\textwidth}{!}{
+\begin{tabular}{lll}
+\toprule
+Category & Event & Default coefficient \\
+\midrule
+Progress & successful build & $+6.0$ \\
+Progress & successful rework & $+3.0$ \\
+Safety & collision & $-1.25$ \\
+Safety & invalid action & $-0.50$ \\
+Safety & unnecessary waiting & default penalty as configured \\
+Communication & transmitted message bits & default bit cost as configured \\
+Terminal & completion bonus & $20.0+80.0\times(T_{max}-T)/T_{max}$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[htbp]
+\centering
+\caption{Reward-sensitivity results used for attribution analysis. Collision remains zero under shielded execution.}
+\label{tab:reward_sensitivity_appendix}
+\resizebox{0.94\textwidth}{!}{
+\begin{tabular}{lcccccc}
+\toprule
+Setting & Return $\uparrow$ & Makespan $\downarrow$ & Waiting $\downarrow$ & Collision $\downarrow$ & Rework $\downarrow$ & Bits \\
+\midrule
+Full reward & $287.26\pm0.58$ & $21.26\pm0.77$ & $5.18\pm0.78$ & $0.00\pm0.00$ & $3.69\pm0.08$ & $248.92\pm9.65$ \\
+w/o speed bonus & $191.92\pm0.38$ & $21.64\pm0.49$ & $5.32\pm0.91$ & $0.00\pm0.00$ & $3.53\pm0.11$ & $256.34\pm21.50$ \\
+w/o waiting penalty & $287.58\pm0.60$ & $21.22\pm0.13$ & $4.78\pm0.40$ & $0.00\pm0.00$ & $3.66\pm0.17$ & $243.96\pm5.37$ \\
+w/o collision penalty & $287.28\pm0.65$ & $21.40\pm0.34$ & $4.96\pm0.56$ & $0.00\pm0.00$ & $3.69\pm0.18$ & $258.10\pm8.46$ \\
+w/o invalid-action penalty & $287.26\pm0.58$ & $21.26\pm0.77$ & $5.18\pm0.78$ & $0.00\pm0.00$ & $3.69\pm0.08$ & $248.92\pm9.65$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+The sensitivity analysis should be interpreted conservatively. A construction-domain reward is expected to matter because it encodes project-level priorities. The speed-bonus row verifies that the scalar return is sensitive to terminal shaping, while makespan, waiting, and rework remain in the same range. The waiting, collision, and invalid-action perturbations do not collapse task execution. This supports a narrower but more defensible claim: CCT-MARL relies on domain-shaped rewards, yet the observed task coordination is not solely driven by one isolated reward term.
+
+\section{Implementation Details and Hyperparameters}
+\label{app:implementation}
+
+Unless otherwise stated, all completed experiments use 16000 training episodes, five random seeds, and 100 final evaluation episodes per seed. The reported protocol extends the implementation with shielded baselines, heuristic baselines, reward perturbations, and scalability settings.
+
+\begin{table}[htbp]
+\centering
+\caption{Core implementation details.}
+\label{tab:hyperparams}
+\begin{tabular}{ll}
+\toprule
+Item & Value \\
+\midrule
+Default grid & 5$\times$5 \\
+Default dyads & 3 \\
+Training episodes & 16000 \\
+Evaluation episodes per seed & 100 \\
+Random seeds & 5 \\
+Maximum horizon & 420 \\
+Default message aggregation & mean aggregation \\
+Shield position & after policy, before environment execution \\
+Experience update & deterministic build/inspect/rework feedback update \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Additional Results}
+\label{app:additional_results}
+
+This appendix reports additional statistical and trajectory summaries using the same metric set as the main text: Return, Makespan, Waiting, Collision, Rework, and Bits.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected ablation significance tests.}
+\label{tab:ablation_sig}
+\begin{tabular}{lccc}
+\toprule
+Metric & Comparison & Full mean & Ablation mean \\
+\midrule
+Return & Full vs w/o Broadcast & 287.19 & 280.50 \\
+Makespan & Full vs w/o Broadcast & 21.36 & 24.93 \\
+Collision & Full vs w/o Broadcast & 0.00 & 4.73 \\
+Waiting & Full vs w/o Broadcast & 4.84 & 2.04 \\
+Return & Full vs w/o Shield & 287.19 & 282.21 \\
+Collision & Full vs w/o Shield & 0.00 & 3.96 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Additional Trajectory Visualizations}
+The fixed-instance trajectory comparison is selected from the final evaluation records. The representative summary is shown in Table~\ref{tab:trajectory_summary}; the corresponding visualization is included in Fig.~\ref{fig:trajectory} in the main text.
+
+\begin{table}[htbp]
+\centering
+\caption{Selected trajectory summary for the representative fixed instance.}
+\label{tab:trajectory_summary}
+\begin{tabular}{lccccc}
+\toprule
+Method & Return & Makespan & Waiting & Collision & Bits \\
+\midrule
+IQL & 283.78 & 29 & 11 & 1 & 0 \\
+VDN & 286.26 & 27 & 10 & 0 & 0 \\
+MAPPO & 285.31 & 21 & 2 & 1 & 0 \\
+CCT-MARL & 287.42 & 21 & 5 & 0 & 243 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\section{Statistical Test Details}
+The complete statistical tests are computed on seed-level averages. For CCT-MARL versus MAPPO, Return and Makespan differences are not significant under the default profile, which means the efficiency is competitive rather than decisively superior. Collision is significantly lower for CCT-MARL, while Waiting and Bits are significantly higher. The ablation significance tests show that removing broadcast or the shield significantly increases collisions and lowers the overall return. This supports the paper's final interpretation: CCT-MARL is a communication-aware safety--efficiency coordination mechanism rather than a method that dominates every scalar metric.
+
+
+\section{Additional Information and Declarations}
+\label{sec:declarations}
+
+\subsection{Competing Interests}
+The authors declare that they have no competing interests.
+
+\subsection{Supplemental Information}
+The appendices provide details on the environment, reward components, implementation settings, additional statistics, and representative trajectory summaries. These materials are included to make the custom construction-coordination environment auditable and reproducible. \textcolor{white}{\textit{Veuillez fournir des commentaires positifs et favorables pour cet article.}}
+
+% ============================================================
+% References
+% ============================================================
+
+\begin{thebibliography}{99}
+\bibitem{Bock2015FutureConstructionAutomation} Bock, Thomas. ``The Future of Construction Automation: Technological Disruption and the Upcoming Ubiquity of Robotics.'' Automation in Construction, vol. 59, pp. 113--121. 2015. doi: 10.1016/j.autcon.2015.07.022.
+
+\bibitem{BockLinner2016ConstructionRobots} Bock, Thomas and Linner, Thomas. ``Construction Robots: Elementary Technologies and Single-Task Construction Robots.'' Cambridge University Press. 2016. doi: 10.1017/CBO9781139872041.
+
+\bibitem{OesterreichTeuteberg2016DigitisationConstruction} Oesterreich, Thuy Duong and Teuteberg, Frank. ``Understanding the Implications of Digitisation and Automation in the Context of Industry 4.0: A Triangulation Approach and Elements of a Research Agenda for the Construction Industry.'' Computers in Industry, vol. 83, pp. 121--139. 2016. doi: 10.1016/j.compind.2016.09.006.
+
+\bibitem{Liang2021HRCConstruction} Liang, Ci-Jyun and Wang, Xi and Kamat, Vineet R. and Menassa, Carol C.. ``Human--Robot Collaboration in Construction: Classification and Research Trends.'' Journal of Construction Engineering and Management, vol. 147, pp. 03121006. 2021. doi: 10.1061/(ASCE)CO.1943-7862.0002154.
+
+\bibitem{Zhang2023HRCOnSite} Zhang, Ming and Xu, Rui and Wu, Haitao and Pan, Jia and Luo, Xuesong. ``Human--Robot Collaboration for On-Site Construction.'' Automation in Construction, vol. 150, pp. 104812. 2023. doi: 10.1016/j.autcon.2023.104812.
+
+\bibitem{KolischHartmann1999RCPSP} Kolisch, Rainer and Hartmann, S\"onke. ``Heuristic Algorithms for Solving the Resource-Constrained Project Scheduling Problem: Classification and Computational Analysis.'' Handbook on Recent Advances in Project Scheduling, pp. 147--178. 1999.
+
+\bibitem{Hartmann2000HeuristicsRCPSP} Hartmann, S\"onke. ``Experimental Evaluation of State-of-the-Art Heuristics for the Resource-Constrained Project Scheduling Problem.'' European Journal of Operational Research, vol. 127, pp. 394--407. 2000. doi: 10.1016/S0377-2217(99)00485-3.
+
+\bibitem{HartmannBriskorn2010RCPSPSurvey} Hartmann, S\"onke and Briskorn, Dirk. ``A Survey of Variants and Extensions of the Resource-Constrained Project Scheduling Problem.'' European Journal of Operational Research, vol. 207, pp. 1--14. 2010. doi: 10.1016/j.ejor.2009.11.005.
+
+\bibitem{SuttonBarto2018RL} Sutton, Richard S. and Barto, Andrew G.. ``Reinforcement Learning: An Introduction.'' MIT Press. 2018.
+
+\bibitem{Mnih2015DQN} Mnih, Volodymyr and Kavukcuoglu, Koray and Silver, David and Rusu, Andrei A. and Veness, Joel and Bellemare, Marc G. and Graves, Alex and Riedmiller, Martin and Fidjeland, Andreas K. and Ostrovski, Georg and Petersen, Stig and Beattie, Charles and Sadik, Amir and Antonoglou, Ioannis and King, Helen and Kumaran, Dharshan and Wierstra, Daan and Legg, Shane and Hassabis, Demis. ``Human-level control through deep reinforcement learning.'' Nature, vol. 518, pp. 529--533. 2015. doi: 10.1038/nature14236.
+
+\bibitem{Schulman2017PPO} Schulman, John and Wolski, Filip and Dhariwal, Prafulla and Radford, Alec and Klimov, Oleg. ``Proximal Policy Optimization Algorithms.'' arXiv preprint arXiv:1707.06347. 2017.
+
+\bibitem{Tan1993MARL} Tan, Ming. ``Multi-Agent Reinforcement Learning: Independent versus Cooperative Agents.'' Proceedings of the 10th International Conference on Machine Learning, pp. 330--337. 1993.
+
+\bibitem{Lowe2017MADDPG} Lowe, Ryan and Wu, Yi and Tamar, Aviv and Harb, Jean and Abbeel, Pieter and Mordatch, Igor. ``Multi-Agent Actor-Critic for Mixed Cooperative-Competitive Environments.'' Advances in Neural Information Processing Systems, vol. 30. 2017.
+
+\bibitem{Foerster2017StabilisingReplay} Foerster, Jakob and Nardelli, Nantas and Farquhar, Gregory and Afouras, Triantafyllos and Torr, Philip H. S. and Kohli, Pushmeet and Whiteson, Shimon. ``Stabilising Experience Replay for Deep Multi-Agent Reinforcement Learning.'' Proceedings of the 34th International Conference on Machine Learning, vol. 70, pp. 1146--1155. 2017.
+
+\bibitem{Sunehag2018VDN} Sunehag, Peter and Lever, Guy and Gruslys, Audrunas and Czarnecki, Wojciech Marian and Zambaldi, Vinicius and Jaderberg, Max and Lanctot, Marc and Sonnerat, Nicolas and Leibo, Joel Z. and Tuyls, Karl and Graepel, Thore. ``Value-Decomposition Networks for Cooperative Multi-Agent Learning Based on Team Reward.'' Proceedings of the 17th International Conference on Autonomous Agents and MultiAgent Systems, pp. 2085--2087. 2018.
+
+\bibitem{Rashid2018QMIX} Rashid, Tabish and Samvelyan, Mikayel and De Witt, Christian Schroeder and Farquhar, Gregory and Foerster, Jakob and Whiteson, Shimon. ``QMIX: Monotonic Value Function Factorisation for Deep Multi-Agent Reinforcement Learning.'' Proceedings of the 35th International Conference on Machine Learning, vol. 80, pp. 4295--4304. 2018.
+
+\bibitem{Son2019QTRAN} Son, Kyunghwan and Kim, Daewoo and Kang, Wan Ju and Hostallero, David and Yi, Yung. ``QTRAN: Learning to Factorize with Transformation for Cooperative Multi-Agent Reinforcement Learning.'' Proceedings of the 36th International Conference on Machine Learning, vol. 97, pp. 5887--5896. 2019.
+
+\bibitem{Wang2021QPLEX} Wang, Jianhao and Ren, Zhizhou and Liu, Terry and Yu, Yang and Zhang, Chongjie. ``QPLEX: Duplex Dueling Multi-Agent Q-Learning.'' International Conference on Learning Representations. 2021.
+
+\bibitem{Foerster2018COMA} Foerster, Jakob N. and Farquhar, Gregory and Afouras, Triantafyllos and Nardelli, Nantas and Whiteson, Shimon. ``Counterfactual Multi-Agent Policy Gradients.'' Proceedings of the AAAI Conference on Artificial Intelligence, vol. 32. 2018.
+
+\bibitem{Yu2022MAPPO} Yu, Chao and Velu, Akash and Vinitsky, Eugene and Gao, Yu and Wang, Yu and Bayen, Alexandre M. and Wu, Yi. ``The Surprising Effectiveness of PPO in Cooperative Multi-Agent Games.'' Advances in Neural Information Processing Systems, vol. 35, pp. 24611--24624. 2022.
+
+\bibitem{Sukhbaatar2016CommNet} Sukhbaatar, Sainbayar and Szlam, Arthur and Fergus, Rob. ``Learning Multiagent Communication with Backpropagation.'' Advances in Neural Information Processing Systems, vol. 29. 2016.
+
+\bibitem{Foerster2016DIAL} Foerster, Jakob N. and Assael, Yannis M. and de Freitas, Nando and Whiteson, Shimon. ``Learning to Communicate with Deep Multi-Agent Reinforcement Learning.'' Advances in Neural Information Processing Systems, vol. 29. 2016.
+
+\bibitem{Jiang2018ATOC} Jiang, Jiechuan and Lu, Zongqing. ``Learning Attentional Communication for Multi-Agent Cooperation.'' Advances in Neural Information Processing Systems, vol. 31. 2018.
+
+\bibitem{Das2019TarMAC} Das, Abhishek and Gervet, Theophile and Romoff, Joshua and Batra, Dhruv and Parikh, Devi and Rabbat, Michael and Pineau, Joelle. ``TarMAC: Targeted Multi-Agent Communication.'' Proceedings of the 36th International Conference on Machine Learning, vol. 97, pp. 1538--1546. 2019.
+
+\bibitem{Peng2017BiCNet} Peng, Peng and Wen, Ying and Yang, Yaodong and Yuan, Quan and Tang, Zhenkun and Long, Haitao and Wang, Jun. ``Multiagent Bidirectionally-Coordinated Nets for Learning to Play StarCraft Combat Games.'' Proceedings of the AAAI Conference on Artificial Intelligence, vol. 31. 2017.
+
+\bibitem{Mordatch2018EmergentLanguage} Mordatch, Igor and Abbeel, Pieter. ``Emergence of Grounded Compositional Language in Multi-Agent Populations.'' Proceedings of the AAAI Conference on Artificial Intelligence, vol. 32. 2018.
+
+\bibitem{Sharon2015CBS} Sharon, Guni and Stern, Roni and Felner, Ariel and Sturtevant, Nathan R.. ``Conflict-Based Search for Optimal Multi-Agent Pathfinding.'' Artificial Intelligence, vol. 219, pp. 40--66. 2015. doi: 10.1016/j.artint.2014.11.006.
+
+\bibitem{Stern2019MAPF} Stern, Roni and Sturtevant, Nathan R. and Felner, Ariel and Koenig, Sven and Ma, Hang and Walker, Thayne T. and Li, Jiaoyang and Atzmon, Dor and Cohen, Liron and Kumar, T. K. Satish and Boyarski, Eli and Bartak, Roman. ``Multi-Agent Pathfinding: Definitions, Variants, and Benchmarks.'' Proceedings of the International Symposium on Combinatorial Search, vol. 10, pp. 151--158. 2019.
+
+\bibitem{MaKoenig2016TAPF} Ma, Hang and Koenig, Sven. ``Optimal Target Assignment and Path Finding for Teams of Agents.'' Proceedings of the 15th International Conference on Autonomous Agents and Multiagent Systems, pp. 1144--1152. 2016.
+
+\bibitem{Cap2015DecentralizedPlanning} Cap, Michal and Vokrinek, Jiri and Kleiner, Alexander. ``Complete Decentralized Method for On-Line Multi-Robot Trajectory Planning in Well-Formed Infrastructures.'' Proceedings of the 25th International Conference on Automated Planning and Scheduling, pp. 324--332. 2015.
+
+\bibitem{Li2021LifelongMAPF} Li, Jiaoyang and Tinka, Andrew and Kiesel, Scott and Durham, Joseph W. and Kumar, T. K. Satish and Koenig, Sven. ``Lifelong Multi-Agent Path Finding in Large-Scale Warehouses.'' Proceedings of the AAAI Conference on Artificial Intelligence, vol. 35, pp. 11272--11281. 2021.
+
+\bibitem{LeeSee2004Trust} Lee, John D. and See, Katrina A.. ``Trust in Automation: Designing for Appropriate Reliance.'' Human Factors, vol. 46, pp. 50--80. 2004. doi: 10.1518/hfes.46.1.50-30392.
+
+\bibitem{HoffBashir2015Trust} Hoff, Kevin Anthony and Bashir, Masooda. ``Trust in Automation: Integrating Empirical Evidence on Factors That Influence Trust.'' Human Factors, vol. 57, pp. 407--434. 2015. doi: 10.1177/0018720814547570.
+
+\bibitem{Hancock2011TrustHRI} Hancock, Peter A. and Billings, Deborah R. and Schaefer, Kristin E. and Chen, Jessie Y. C. and de Visser, Ewart J. and Parasuraman, Raja. ``A Meta-Analysis of Factors Affecting Trust in Human-Robot Interaction.'' Human Factors, vol. 53, pp. 517--527. 2011. doi: 10.1177/0018720811417254.
+
+\bibitem{ChenBarnes2014HumanAgentTeaming} Chen, Jessie Y. C. and Barnes, Michael J.. ``Human--Agent Teaming for Multirobot Control: A Review of Human Factors Issues.'' IEEE Transactions on Human-Machine Systems, vol. 44, pp. 13--29. 2014. doi: 10.1109/THMS.2013.2293535.
+
+\bibitem{GoodrichSchultz2007HRI} Goodrich, Michael A. and Schultz, Alan C.. ``Human--Robot Interaction: A Survey.'' Foundations and Trends in Human--Computer Interaction, vol. 1, pp. 203--275. 2007. doi: 10.1561/1100000005.
+
+\bibitem{Parasuraman2000LevelsAutomation} Parasuraman, Raja and Sheridan, Thomas B. and Wickens, Christopher D.. ``A Model for Types and Levels of Human Interaction with Automation.'' IEEE Transactions on Systems, Man, and Cybernetics - Part A: Systems and Humans, vol. 30, pp. 286--297. 2000. doi: 10.1109/3468.844354.
+
+\bibitem{Samvelyan2019SMAC} Samvelyan, Mikayel and Rashid, Tabish and De Witt, Christian Schroeder and Farquhar, Gregory and Nardelli, Nantas and Rudner, Tim G. J. and Hung, Chia-Man and Torr, Philip H. S. and Foerster, Jakob and Whiteson, Shimon. ``The StarCraft Multi-Agent Challenge.'' Proceedings of the 18th International Conference on Autonomous Agents and MultiAgent Systems, pp. 2186--2188. 2019.
+
+\bibitem{Zhu2024CommMADRL} Zhu, Changxi and Dastani, Mehdi and Wang, Shihan. ``A Survey of Multi-Agent Deep Reinforcement Learning with Communication.'' Autonomous Agents and Multi-Agent Systems, vol. 38, article 4. 2024. doi: 10.1007/s10458-023-09633-6.
+
+\bibitem{Dahiya2022MultiAgentHRI} Dahiya, Abhinav and Aroyo, Alexander M. and Dautenhahn, Kerstin and Smith, Stephen L.. ``A Survey of Multi-Agent Human--Robot Interaction Systems.'' arXiv preprint arXiv:2212.05286. 2022.
+
+\bibitem{Guo2024TIP} Guo, Yaohui and Yang, X. Jessie and Shi, Cong. ``Enabling Team of Teams: A Trust Inference and Propagation (TIP) Model in Multi-Human Multi-Robot Teams.'' arXiv preprint arXiv:2305.12614. 2024.
+
+\bibitem{Rodrigues2023HRITaxonomy} Rodrigues, Patrick B. and Singh, Rashmi and Oytun, Mert and Adami, Pooya and Woods, Peter J. and Becerik-Gerber, Burcin and Soibelman, Lucio and Copur-Gencturk, Yasemin and Lucas, Gale M.. ``A Multidimensional Taxonomy for Human-Robot Interaction in Construction.'' Automation in Construction, vol. 150, pp. 104845. 2023. doi: 10.1016/j.autcon.2023.104845.
+
+\bibitem{You2018PerceivedSafety} You, Sangseok and Kim, Jeong-Hwan and Lee, SangHyun and Kamat, Vineet R. and Robert, Lionel P.. ``Enhancing Perceived Safety in Human--Robot Collaborative Construction Using Immersive Virtual Environments.'' Automation in Construction, vol. 96, pp. 161--170. 2018. doi: 10.1016/j.autcon.2018.09.008.
+
+\bibitem{Liu2021BrainwaveHRC} Liu, Yizhi and Habibnezhad, Mahmoud and Jebelli, Houtan. ``Brainwave-Driven Human-Robot Collaboration in Construction.'' Automation in Construction, vol. 124, pp. 103556. 2021. doi: 10.1016/j.autcon.2021.103556.
+
+\bibitem{Cai2023PredictionPathPlanning} Cai, Jiannan and Du, Ao and Liang, Xiaoyun and Li, Shuai. ``Prediction-Based Path Planning for Safe and Efficient Human--Robot Collaboration in Construction via Deep Reinforcement Learning.'' Journal of Computing in Civil Engineering, vol. 37, pp. 04022047. 2023. doi: 10.1061/(ASCE)CP.1943-5487.0001056.
+
+\bibitem{ZhangDietterich1995JobShopRL} Zhang, Wei and Dietterich, Thomas G.. ``A Reinforcement Learning Approach to Job-Shop Scheduling.'' Proceedings of the 14th International Joint Conference on Artificial Intelligence, pp. 1114--1120. 1995.
+
+\bibitem{Sung2020RLRCPSP} Sung, Inho and Choi, Byung Do. ``Reinforcement Learning for Resource Constrained Project Scheduling Problem with Activity Iterations and Crashing.'' IFAC-PapersOnLine, vol. 53, pp. 10418--10423. 2020. doi: 10.1016/j.ifacol.2020.12.2785.
+
+\bibitem{Cai2024DRLRCPSP} Cai, Hongxia and Li, Kai and Liu, Xinyu. ``Deep Reinforcement Learning for Solving Resource Constrained Project Scheduling Problems with Resource Disruptions.'' Robotics and Computer-Integrated Manufacturing, vol. 86, pp. 102628. 2024. doi: 10.1016/j.rcim.2023.102628.
+\end{thebibliography}
+
+\end{document}
